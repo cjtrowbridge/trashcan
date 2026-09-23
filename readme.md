@@ -87,3 +87,9 @@ forcing high GPU clocks, `RADV_PERFTEST=nogttspill`, Flash Attention, KV-cache
 quantization, smaller prompt batches, or D700 stability flags are deliberately
 not made permanent yet. They should be benchmarked on this hardware before being
 canonized here.
+
+The versioned report in
+[`research/maximizing-local-llm-inference-research.md`](research/maximizing-local-llm-inference-research.md)
+audits the baseline, investigates the hardware/software optimization space, and
+defines a prioritized, falsifiable experiment program for maximizing decode
+throughput before any tuning is made permanent.
