@@ -1,0 +1,14 @@
+# Agentic Pipelines local environment and local inference configuration
+.agentic-pipelines/
+api.yaml
+
+# Agentic Pipelines runtime evidence
+state/
+artifacts/
+threads/
+failures/
+runs/
+reports/
+*.rejected.md
+*.rejected.json
+*.rejected.txt

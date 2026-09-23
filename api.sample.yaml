@@ -1,0 +1,39 @@
+# Copy this file to api.yaml and set values for the local inference service.
+# api.yaml is intentionally ignored by Git and must never contain cloud credentials.
+schema_version: 1
+provider: ollama
+endpoint: http://127.0.0.1:11434
+model: your-local-model
+
+# Loopback and private-network addresses are accepted by default. Set this only
+# for an explicitly approved non-private gateway; no cloud fallback is inferred.
+allow_remote_endpoint: false
+
+# Ollama normally needs no credential. Set api_key only when your local gateway
+# requires one; it is redacted from all supported diagnostics and evidence.
+authentication:
+  api_key: null
+  headers: {}
+
+request:
+  connect_timeout_seconds: 10
+  read_timeout_seconds: 600
+  total_timeout_seconds: 660
+  max_attempts: 3
+  initial_backoff_seconds: 1
+  max_backoff_seconds: 20
+  tls_verify: true
+
+# Applied to every request unless a pipeline stage supplies an allowed override.
+generation:
+  temperature: 0.2
+  # Every LLM stage needs bounded completion and context budgets. Calculate
+  # num_ctx from the largest measured assembled request plus num_predict; do not
+  # rely on the model's native maximum context or confuse num_predict with it.
+  # Tune both values to the host artifact and available model memory.
+  num_predict: 2048
+  num_ctx: 16384
+
+# Literal strings to redact from captured prompts, responses, errors, and logs.
+redaction:
+  sensitive_values: []

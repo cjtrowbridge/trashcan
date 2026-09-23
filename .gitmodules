@@ -1,0 +1,6 @@
+[submodule "agentic-pipelines"]
+	path = agentic-pipelines
+	url = https://github.com/cjtrowbridge/agentic-pipelines
+[submodule "llm_benchmark"]
+	path = llm_benchmark
+	url = https://github.com/cjtrowbridge/llm_benchmark

@@ -1,0 +1,19 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Benchmark Ollama",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "bash \"${workspaceFolder}/scripts/run-benchmark.sh\"",
+      "windows": {
+        "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"${workspaceFolder}\\scripts\\run-benchmark.ps1\""
+      },
+      "cwd": "${workspaceFolder}",
+      "presentation": {
+        "group": "benchmark",
+        "order": 1
+      }
+    }
+  ]
+}
