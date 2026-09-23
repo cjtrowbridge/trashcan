@@ -31,6 +31,10 @@ chmod +x bootstrap.sh
 sudo ./bootstrap.sh
 ```
 
+In VS Code connected to the Debian host, **Bootstrap Trashcan** is the primary
+Run and Debug action and is also available as a task. It invokes this same
+script.
+
 On its first run, the script asks for a VNC password if one has not been set.
 Switching the GPUs from `radeon` to `amdgpu`, and newly granted group membership,
 require a reboot or new login session. The script reports that condition and

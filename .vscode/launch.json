@@ -2,16 +2,13 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Benchmark Ollama",
+      "name": "Bootstrap Trashcan",
       "type": "node-terminal",
       "request": "launch",
-      "command": "bash \"${workspaceFolder}/scripts/run-benchmark.sh\"",
-      "windows": {
-        "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"${workspaceFolder}\\scripts\\run-benchmark.ps1\""
-      },
+      "command": "bash \"${workspaceFolder}/bootstrap.sh\"",
       "cwd": "${workspaceFolder}",
       "presentation": {
-        "group": "benchmark",
+        "group": "bootstrap",
         "order": 1
       }
     }
