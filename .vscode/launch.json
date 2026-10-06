@@ -5,7 +5,7 @@
       "name": "Bootstrap Trashcan",
       "type": "node-terminal",
       "request": "launch",
-      "command": "bash \"${workspaceFolder}/bootstrap.sh\"",
+      "command": "python3 \"${workspaceFolder}/scripts/bootstrap.py\"",
       "cwd": "${workspaceFolder}",
       "presentation": {
         "group": "bootstrap",

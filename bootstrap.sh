@@ -4,6 +4,14 @@
 
 set -Eeuo pipefail
 
+# Stable setup boundary; machine repairs enter only with an explicit stage.
+if [[ ${1:-} != --machine-stage ]]; then
+  exec python3 "$(dirname -- "${BASH_SOURCE[0]}")/scripts/bootstrap.py" "$@"
+fi
+REPAIR_STAGE=${2:?A machine repair stage is required}
+shift 2
+trap 'printf "bootstrap: interrupted\n" >&2; exit 130' INT
+
 PASS_COUNT=0
 CHANGE_COUNT=0
 WARN_COUNT=0
@@ -17,12 +25,11 @@ reset='\033[0m'
 pass()   { printf "${green}[ok]${reset} %s\n" "$*"; PASS_COUNT=$((PASS_COUNT + 1)); }
 change() { printf "${blue}[changed]${reset} %s\n" "$*"; CHANGE_COUNT=$((CHANGE_COUNT + 1)); }
 warn()   { printf "${yellow}[warning]${reset} %s\n" "$*" >&2; WARN_COUNT=$((WARN_COUNT + 1)); }
-step()   { printf '\n==> %s\n' "$*"; }
+step()   { [[ $* == "$REPAIR_STAGE" ]] || return 1; printf '\n==> %s\n' "$*"; }
 die()    { printf '\n[error] %s\n' "$*" >&2; exit 1; }
 
 if [[ ${EUID} -ne 0 ]]; then
-  command -v sudo >/dev/null 2>&1 || die "Run this script as root (sudo is not installed)."
-  exec sudo --preserve-env=TARGET_USER bash "$0" "$@"
+  die "Machine repairs require explicitly running sudo python3 scripts/bootstrap.py."
 fi
 
 if [[ ! -r /etc/os-release ]]; then
@@ -58,6 +65,32 @@ install_packages() {
   change "Installed packages: ${missing[*]}"
 }
 
+enable_debian_non_free() {
+  local source_file changed=0
+  if grep -Rqs --include='*.list' --include='*.sources' \
+    -E '(^[[:space:]]*deb .*[[:space:]]non-free([[:space:]]|$)|^Components:.*[[:space:]]non-free([[:space:]]|$))' \
+    /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null; then
+    pass "Debian non-free component is enabled"
+    return
+  fi
+  for source_file in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do
+    [[ -f $source_file ]] || continue
+    if grep -q 'main non-free-firmware' "$source_file"; then
+      sed -i 's/main non-free-firmware/main non-free non-free-firmware/g' "$source_file"
+      changed=1
+    fi
+  done
+  for source_file in /etc/apt/sources.list.d/*.sources; do
+    [[ -f $source_file ]] || continue
+    if grep -q '^Components: main non-free-firmware$' "$source_file"; then
+      sed -i 's/^Components: main non-free-firmware$/Components: main non-free non-free-firmware/' "$source_file"
+      changed=1
+    fi
+  done
+  ((changed)) || die "Could not enable Debian non-free; add it to an APT source containing main and non-free-firmware."
+  change "Enabled the Debian non-free component for Broadcom STA"
+}
+
 enable_service() {
   local service=$1
   systemctl enable "$service" >/dev/null
@@ -80,7 +113,7 @@ install_if_changed() {
   return 0
 }
 
-step "Checking host"
+if step "Checking host"; then
 printf 'Host: %s (%s), user: %s, architecture: %s\n' "$(hostname)" "${PRETTY_NAME}" "$TARGET_USER" "$ARCH"
 if [[ ${VERSION_ID:-} != 13 ]]; then
   warn "This configuration was canonized on Debian 13; continuing on ${PRETTY_NAME}."
@@ -93,12 +126,48 @@ else
   pass "MacPro6,1 detected"
 fi
 
-step "Installing remote-access and diagnostic packages"
-install_packages avahi-daemon avahi-utils libnss-mdns x11vnc novnc websockify shellinabox pciutils \
-  firmware-amd-graphics mesa-vulkan-drivers vulkan-tools ca-certificates curl
+fi
+if step "Installing remote-access and diagnostic packages"; then
+install_packages avahi-daemon avahi-utils libnss-mdns x11vnc novnc websockify xrdp xorgxrdp \
+  shellinabox pciutils iw rfkill firmware-amd-graphics mesa-vulkan-drivers vulkan-tools ca-certificates curl xfconf
 enable_service avahi-daemon
 
-step "Configuring x11vnc"
+fi
+if step "Configuring BCM4360 Wi-Fi"; then
+enable_debian_non_free
+install_packages "linux-headers-$(uname -r)" broadcom-sta-dkms
+modprobe -r b43 b43legacy brcmsmac bcma ssb 2>/dev/null || true
+if modprobe wl; then
+  if iw dev | grep -q '^Interface '; then
+    pass "Broadcom wl driver created a wireless interface"
+  else
+    warn "Broadcom wl loaded but no wireless interface is visible; reboot and inspect: journalctl -k -b"
+    REBOOT_REQUIRED=1
+  fi
+else
+  warn "Could not load the Broadcom wl driver; reboot and inspect: dkms status"
+  REBOOT_REQUIRED=1
+fi
+
+fi
+if step "Configuring the headless X screen"; then
+tmp_xorg=$(mktemp)
+cat >"$tmp_xorg" <<'XORG_EOF'
+# Xorg otherwise creates a 1024x768 framebuffer when no monitor is connected.
+# x11vnc mirrors this display, so set the desired desktop size in its AMDGPU OutputClass.
+Section "OutputClass"
+    Identifier "Trashcan headless AMDGPU resolution"
+    MatchDriver "amdgpu"
+    Option "NoOutputInitialSize" "1920 1080"
+EndSection
+XORG_EOF
+if install_if_changed "$tmp_xorg" /etc/X11/xorg.conf.d/10-headless-resolution.conf 0644; then
+  warn "The headless X resolution will become 1920x1080 after the next reboot or display-manager restart."
+fi
+rm -f "$tmp_xorg"
+
+fi
+if step "Configuring x11vnc"; then
 if [[ ! -s /etc/x11vnc.pass ]]; then
   printf 'No VNC password exists. Enter one for browser desktop access.\n'
   x11vnc -storepasswd /etc/x11vnc.pass
@@ -142,7 +211,30 @@ else
   warn "x11vnc is enabled but cannot be started until LightDM creates its Xauthority file."
 fi
 
-step "Configuring noVNC"
+fi
+if step "Configuring VNC desktop responsiveness"; then
+desktop_uid=$(id -u "$TARGET_USER")
+desktop_bus="/run/user/$desktop_uid/bus"
+if [[ -S $desktop_bus ]]; then
+  compositor_state=$(sudo -u "$TARGET_USER" env DISPLAY=:0 XAUTHORITY=/var/run/lightdm/root/:0 \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=$desktop_bus" \
+    xfconf-query -c xfwm4 -p /general/use_compositing 2>/dev/null || true)
+  if [[ $compositor_state == false ]]; then
+    pass "XFCE compositing is disabled for the VNC desktop"
+  elif [[ $compositor_state == true ]]; then
+    sudo -u "$TARGET_USER" env DISPLAY=:0 XAUTHORITY=/var/run/lightdm/root/:0 \
+      DBUS_SESSION_BUS_ADDRESS="unix:path=$desktop_bus" \
+      xfconf-query -c xfwm4 -p /general/use_compositing -s false
+    change "Disabled XFCE compositing to reduce x11vnc frame updates"
+  else
+    warn "Could not read XFCE compositor state; rerun after $TARGET_USER has logged into the graphical desktop."
+  fi
+else
+  warn "The graphical user D-Bus is not available; rerun after $TARGET_USER has logged into XFCE to disable compositing."
+fi
+
+fi
+if step "Configuring noVNC"; then
 tmp_novnc=$(mktemp)
 cat >"$tmp_novnc" <<'EOF'
 [Unit]
@@ -167,7 +259,53 @@ fi
 rm -f "$tmp_novnc"
 enable_service novnc
 
-step "Configuring ShellInABox with a dark default"
+fi
+if step "Configuring RDP for the physical desktop"; then
+tmp_xrdp=$(mktemp)
+awk '
+function physical_desktop() {
+  print "[PhysicalDesktop]"
+  print "name=Physical desktop (:0)"
+  print "lib=libvnc.so"
+  print "ip=127.0.0.1"
+  print "port=5900"
+  print "username=na"
+  print "password=ask"
+}
+/^autorun=/ {
+  print "autorun=PhysicalDesktop"
+  next
+}
+/^\[(Xorg|PhysicalDesktop|Physical desktop)\]$/ {
+  if (!physical_written) {
+    physical_desktop()
+    physical_written=1
+  }
+  skipping=1
+  next
+}
+skipping && /^$/ {
+  skipping=0
+  print
+  next
+}
+skipping { next }
+{ print }
+END {
+  if (!physical_written) {
+    print ""
+    physical_desktop()
+  }
+}
+' /etc/xrdp/xrdp.ini >"$tmp_xrdp"
+if install_if_changed "$tmp_xrdp" /etc/xrdp/xrdp.ini 0644; then
+  systemctl restart xrdp
+fi
+rm -f "$tmp_xrdp"
+enable_service xrdp
+
+fi
+if step "Configuring ShellInABox with a dark default"; then
 enable_service shellinabox
 theme_dir=/etc/shellinabox/options-enabled
 if [[ -e "$theme_dir/00+Black on White.css" || ! -e "$theme_dir/00+White On Black.css" ]]; then
@@ -180,7 +318,8 @@ else
   pass "ShellInABox dark theme is the default"
 fi
 
-step "Installing Docker Engine"
+fi
+if step "Installing Docker Engine"; then
 install -m 0755 -d /etc/apt/keyrings
 docker_key=/etc/apt/keyrings/docker.asc
 if [[ ! -s $docker_key ]]; then
@@ -218,7 +357,8 @@ for group in docker render video; do
   fi
 done
 
-step "Selecting amdgpu for the FirePro D700 (Tahiti/Southern Islands)"
+fi
+if step "Selecting amdgpu for the FirePro D700 (Tahiti/Southern Islands)"; then
 install_packages initramfs-tools
 if [[ -r "/boot/config-$(uname -r)" ]] && ! grep -q '^CONFIG_DRM_AMDGPU_SI=y' "/boot/config-$(uname -r)"; then
   warn "The running kernel does not advertise CONFIG_DRM_AMDGPU_SI=y."
@@ -249,7 +389,9 @@ if [[ " $(cat /proc/cmdline) " != *' radeon.si_support=0 '* || " $(cat /proc/cmd
   REBOOT_REQUIRED=1
 fi
 
+fi
 GPU_READY=0
+if [[ $REPAIR_STAGE == 'Configuring Ollama' ]]; then
 lspci_display=$(lspci -nnk 2>/dev/null | grep -A3 -Ei 'VGA|Display' || true)
 if command -v lspci >/dev/null 2>&1 && grep -q 'Kernel driver in use: amdgpu' <<<"$lspci_display"; then
   pass "At least one display GPU is using amdgpu"
@@ -269,12 +411,13 @@ else
   warn "The D700s are not using amdgpu yet."
 fi
 
-step "Configuring Ollama"
+fi
+if step "Configuring Ollama"; then
 docker volume inspect ollama >/dev/null 2>&1 || { docker volume create ollama >/dev/null; change "Created the Ollama model volume"; }
 if ((GPU_READY)); then
   render_gid=$(getent group render | cut -d: -f3)
   video_gid=$(getent group video | cut -d: -f3)
-  desired_config='trashcan-vulkan-v1'
+  desired_config='trashcan-vulkan-v2-context-130k'
   current_config=$(docker inspect -f '{{index .Config.Labels "io.github.trashcan.bootstrap"}}' ollama 2>/dev/null || true)
   if [[ $current_config != "$desired_config" ]]; then
     if docker container inspect ollama >/dev/null 2>&1; then
@@ -289,6 +432,7 @@ if ((GPU_READY)); then
       --group-add "$render_gid" \
       --group-add "$video_gid" \
       -e OLLAMA_VULKAN=1 \
+      -e OLLAMA_CONTEXT_LENGTH=130000 \
       -v ollama:/root/.ollama \
       -p 11434:11434 \
       ollama/ollama:latest >/dev/null
@@ -317,9 +461,11 @@ else
   warn "Deferring the Ollama container until amdgpu, Vulkan, and group membership are active."
 fi
 
-step "Final status"
+fi
+if step "Final status"; then
 host_fqdn=$(hostname -f 2>/dev/null || hostname)
 printf 'Desktop: http://%s:6080/vnc.html\n' "$host_fqdn"
+printf 'RDP:     %s:3389 (physical desktop via the VNC password)\n' "$host_fqdn"
 printf 'Shell:   https://%s:4200\n' "$host_fqdn"
 printf 'Ollama:  http://%s:11434\n' "$host_fqdn"
 printf '\nResults: %d ok, %d changed, %d warnings\n' "$PASS_COUNT" "$CHANGE_COUNT" "$WARN_COUNT"
@@ -327,4 +473,5 @@ if ((REBOOT_REQUIRED)); then
   printf "${yellow}Reboot (or fully log out after group-only changes), then run this script again.${reset}\n"
 else
   pass "Bootstrap is complete; no reboot is pending"
+fi
 fi

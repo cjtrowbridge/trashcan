@@ -4,9 +4,9 @@
     {
       "label": "Bootstrap Trashcan",
       "type": "process",
-      "command": "bash",
+      "command": "python3",
       "args": [
-        "${workspaceFolder}/bootstrap.sh"
+        "${workspaceFolder}/scripts/bootstrap.py"
       ],
       "presentation": {
         "reveal": "always",
