@@ -57,6 +57,22 @@ docker exec ollama ollama ps
 
 The `PROCESSOR` column is the authoritative quick check for GPU offload.
 
+## Desktop troubleshooting
+
+The [remote desktop latency investigation](plans/remote-desktop-latency-investigation.md)
+defines input-response and screen-update measurements, controlled mitigation
+trials, and measurable acceptance criteria for the laggy remote connection.
+
+Remote desktop failing after inactivity is tracked in the
+[evidence record](research/remote-desktop-idle-failure.md) and
+[host investigation plan](plans/remote-desktop-idle-investigation.md).
+The plan includes a read-only diagnostic collector and before/failure captures
+to run on Trashcan before promoting a remedy into bootstrap.
+
+The [keyring encryption investigation](plans/keyring-encryption-investigation.md)
+tracks the OS keyring warning, with session diagnostics, targeted remedies,
+rollback, and checks for encrypted credential persistence.
+
 ## Benchmarking
 
 [`llm_benchmark`](llm_benchmark) is included as a submodule for repeatable

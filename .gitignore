@@ -1,6 +1,7 @@
 # Agentic Pipelines local environment and local inference configuration
 .agentic-pipelines/
 api.yaml
+diagnostics/
 
 # Agentic Pipelines runtime evidence
 state/
